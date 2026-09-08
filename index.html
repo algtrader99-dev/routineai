@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>RoutineAI 🤖</title>
+
+<style>
+body{
+    margin:0;
+    font-family:Arial,sans-serif;
+    background:#f1f3f6;
+}
+
+.app{
+    max-width:650px;
+    margin:auto;
+    padding:20px;
+}
+
+.header{
+    text-align:center;
+    padding:20px;
+}
+
+.header h1{
+    font-size:34px;
+    margin:0;
+}
+
+.card{
+    background:white;
+    padding:20px;
+    margin-top:15px;
+    border-radius:18px;
+    box-shadow:0 5px 20px rgba(0,0,0,.08);
+}
+
+.upload{
+    border:2px dashed #777;
+    border-radius:15px;
+    padding:25px;
+    text-align:center;
+}
+
+#photo{
+    display:none;
+}
+
+.upload label{
+    display:block;
+    font-size:18px;
+    font-weight:bold;
+}
+
+#preview{
+    width:100%;
+    display:none;
+    margin-top:15px;
+    border-radius:12px;
+}
+
+button{
+    width:100%;
+    padding:14px;
+    margin-top:12px;
+    border:0;
+    border-radius:10px;
+    background:#111;
+    color:white;
+    font-size:16px;
+}
+
+button:disabled{
+    opacity:.5;
+}
+
+.task{
+    background:#f5f5f5;
+    padding:15px;
+    margin-top:10px;
+    border-radius:12px;
+}
+
+.task-title{
+    font-weight:bold;
+    font-size:17px;
+}
+
+.task-time{
+    color:#666;
+    margin-top:5px;
+}
+
+.done{
+    text-decoration:line-through;
+    opacity:.5;
+}
+
+.progress{
+    height:12px;
+    background:#ddd;
+    border-radius:20px;
+    overflow:hidden;
+}
+
+#bar{
+    height:100%;
+    width:0%;
+    background:#111;
+}
+
+#message{
+    text-align:center;
+    margin-top:15px;
+    font-weight:bold;
+}
+
+.empty{
+    text-align:center;
+    color:#777;
+    padding:20px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<div class="header">
+<h1>RoutineAI 🤖</h1>
+<p>AI Personal Routine Assistant</p>
+</div>
+
+<div class="card">
+
+<h2>📸 Upload Routine</h2>
+
+<div class="upload">
+
+<input type="file" id="photo" accept="image/*">
+
+<label for="photo">
+📷 Routine-এর ছবি নির্বাচন করো
+</label>
+
+</div>
+
+<img id="preview">
+
+<button id="analyzeBtn" onclick="analyzeRoutine()">
+🤖 AI দিয়ে Routine তৈরি করো
+</button>
+
+<div id="message"></div>
+
+</div>
+
+
+<div class="card">
+
+<h2>📅 Today's Routine</h2>
+
+<div id="tasks"></div>
+
+</div>
+
+
+<div class="card">
+
+<h2>📊 Progress</h2>
+
+<div class="progress">
+<div id="bar"></div>
+</div>
+
+<p id="progressText">
+0% completed
+</p>
+
+</div>
+
+</div>
+
+
+<script>
+
+let routines =
+JSON.parse(localStorage.getItem("routines")) || [];
+
+const photo =
+document.getElementById("photo");
+
+const preview =
+document.getElementById("preview");
+
+
+photo.addEventListener("change", function(){
+
+const file = this.files[0];
+
+if(!file) return;
+
+preview.src =
+URL.createObjectURL(file);
+
+preview.style.display = "block";
+
+});
+
+
+function imageToBase64(file){
+
+return new Promise((resolve,reject)=>{
+
+const reader = new FileReader();
+
+reader.onload = () => {
+
+resolve(
+reader.result.split(",")[1]
+);
+
+};
+
+reader.onerror = reject;
+
+reader.readAsDataURL(file);
+
+});
+
+}
+
+
+async function analyzeRoutine(){
+
+const file = photo.files[0];
+
+if(!file){
+
+alert("আগে routine-এর ছবি নির্বাচন করো!");
+
+return;
+
+}
+
+const button =
+document.getElementById("analyzeBtn");
+
+const message =
+document.getElementById("message");
+
+button.disabled = true;
+
+button.innerText =
+"🤖 AI ছবি পড়ছে...";
+
+message.innerText =
+"⏳ একটু অপেক্ষা করো...";
+
+
+try{
+
+const base64Image =
+await imageToBase64(file);
+
+
+const response =
+await fetch("/api/analyze",{
+
+method:"POST",
+
+headers:{
+"Content-Type":"application/json"
+},
+
+body:JSON.stringify({
+
+image:base64Image,
+
+mimeType:
+file.type || "image/jpeg"
+
+})
+
+});
+
+
+const data =
+await response.json();
+
+
+if(!response.ok){
+
+throw new Error(
+data.error || "Server error"
+);
+
+}
+
+
+if(!data.routines ||
+!Array.isArray(data.routines)){
+
+throw new Error(
+"AI কোনো routine দেয়নি।"
+);
+
+}
+
+
+let added = 0;
+
+
+data.routines.forEach(item=>{
+
+if(!item.title || !item.time)
+return;
+
+
+routines.push({
+
+id:Date.now()+Math.random(),
+
+title:String(item.title),
+
+time:normalizeTime(item.time),
+
+duration:
+Number(item.duration) || 45,
+
+done:false
+
+});
+
+added++;
+
+});
+
+
+save();
+
+render();
+
+
+message.innerText =
+"✅ AI "+added+
+"টি routine তৈরি করেছে!";
+
+
+}catch(error){
+
+console.error(error);
+
+message.innerText =
+"❌ Analysis failed";
+
+alert(
+"সমস্যা হয়েছে:\n\n"+
+error.message
+);
+
+}
+
+
+finally{
+
+button.disabled = false;
+
+button.innerText =
+"🤖 AI দিয়ে Routine তৈরি করো";
+
+}
+
+}
+
+
+function normalizeTime(value){
+
+let t =
+String(value)
+.trim()
+.toUpperCase();
+
+
+let match =
+t.match(
+/^(\d{1,2})(?::(\d{1,2}))?\s*(AM|PM)?$/
+);
+
+
+if(!match)
+return t;
+
+
+let h =
+Number(match[1]);
+
+let m =
+Number(match[2] || 0);
+
+let period =
+match[3];
+
+
+if(period==="PM" && h!==12)
+h += 12;
+
+
+if(period==="AM" && h===12)
+h = 0;
+
+
+return String(h).padStart(2,"0")
++":"+
+String(m).padStart(2,"0");
+
+}
+
+
+function save(){
+
+localStorage.setItem(
+"routines",
+JSON.stringify(routines)
+);
+
+}
+
+
+function render(){
+
+const container =
+document.getElementById("tasks");
+
+container.innerHTML = "";
+
+
+routines.sort(
+(a,b)=>
+a.time.localeCompare(b.time)
+);
+
+
+if(routines.length===0){
+
+container.innerHTML =
+'<div class="empty">কোনো routine নেই 📅</div>';
+
+updateProgress();
+
+return;
+
+}
+
+
+routines.forEach(task=>{
+
+const div =
+document.createElement("div");
+
+div.className = "task";
+
+
+div.innerHTML = `
+
+<div class="task-title ${task.done?"done":""}">
+${escapeHTML(task.title)}
+</div>
+
+<div class="task-time">
+⏰ ${task.time}
+• ${task.duration} min
+</div>
+
+<button onclick="completeTask(${task.id})">
+
+${task.done?"↩️ Undo":"✓ Complete"}
+
+</button>
+
+<button onclick="deleteTask(${task.id})">
+
+🗑️ Delete
+
+</button>
+
+`;
+
+
+container.appendChild(div);
+
+});
+
+
+updateProgress();
+
+}
+
+
+function escapeHTML(text){
+
+const div =
+document.createElement("div");
+
+div.textContent = text;
+
+return div.innerHTML;
+
+}
+
+
+function completeTask(id){
+
+const task =
+routines.find(
+x=>x.id===id
+);
+
+if(!task) return;
+
+task.done =
+!task.done;
+
+save();
+
+render();
+
+}
+
+
+function deleteTask(id){
+
+routines =
+routines.filter(
+x=>x.id!==id
+);
+
+save();
+
+render();
+
+}
+
+
+function updateProgress(){
+
+const total =
+routines.length;
+
+const completed =
+routines.filter(
+x=>x.done
+).length;
+
+
+const percentage =
+total===0
+?0
+:Math.round(
+completed/total*100
+);
+
+
+document.getElementById("bar")
+.style.width =
+percentage+"%";
+
+
+document.getElementById("progressText")
+.innerText =
+percentage+
+"% completed ("+
+completed+
+"/"+
+total+
+")";
+
+}
+
+
+render();
+
+</script>
+
+</body>
+</html>
