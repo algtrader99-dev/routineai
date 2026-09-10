@@ -1,38 +1,62 @@
 const express = require("express");
-const path = require("path");
 
 const app = express();
 
+// JSON request-এর জন্য
 app.use(express.json({ limit: "20mb" }));
 
-// Serve index.html
+// index.html serve করবে
 app.use(express.static(__dirname));
 
-// Gemini API
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+const GEMINI_URL =
+  "https://generativelanguage.googleapis.com/v1beta/interactions";
+
+
 app.post("/api/analyze", async (req, res) => {
+
   try {
+
     const { image, mimeType } = req.body;
 
+    // ছবি পাওয়া গেছে কি না
     if (!image) {
+
       return res.status(400).json({
         error: "Image পাওয়া যায়নি"
       });
+
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
 
-    if (!apiKey) {
+    // API key পাওয়া গেছে কি না
+    if (!GEMINI_API_KEY) {
+
       return res.status(500).json({
-        error: "GEMINI_API_KEY পাওয়া যায়নি"
+        error: "GEMINI_API_KEY server-এ সেট করা হয়নি"
       });
+
     }
 
+
+    // Gemini-কে দেওয়া instruction
     const prompt = `
-Read this school routine image carefully.
+You are an AI school routine assistant.
 
-Extract all clearly visible routine entries.
+Read the uploaded school routine image carefully.
 
-Return ONLY valid JSON in this format:
+Extract every clearly visible routine entry.
+
+For each entry find:
+
+1. Subject or task name
+2. Start time
+3. Duration in minutes
+
+Return ONLY JSON.
+
+Example:
 
 {
   "routines": [
@@ -40,101 +64,96 @@ Return ONLY valid JSON in this format:
       "title": "Mathematics",
       "time": "08:00",
       "duration": 45
+    },
+    {
+      "title": "English",
+      "time": "09:00",
+      "duration": 45
     }
   ]
 }
 
 Rules:
+
 - Use 24-hour time.
 - Convert AM/PM correctly.
-- Do not invent information.
+- Extract every clearly readable entry.
+- Do not invent subjects.
+- Do not invent times.
 - If duration is not visible, use 45 minutes.
-- Extract every clearly readable subject/task.
+- If something is unclear, skip it.
 `;
 
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/interactions",
-      {
-        method: "POST",
 
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey
-        },
+    // Gemini API request
+    const response = await fetch(GEMINI_URL, {
 
-        body: JSON.stringify({
-          model: "gemini-3.8-flash",
+      method: "POST",
 
-          input: [
-            {
-              type: "text",
-              text: prompt
-            },
-            {
-              type: "image",
-              data: image,
-              mime_type: mimeType || "image/jpeg"
-            }
-          ]
-        })
-      }
-    );
+      headers: {
 
-    const data = await response.json();
+        "Content-Type": "application/json",
 
-    if (!response.ok) {
-      console.error(data);
+        "x-goog-api-key": GEMINI_API_KEY
 
-      return res.status(response.status).json({
-        error:
-          data?.error?.message ||
-          "Gemini API error"
-      });
-    }
+      },
 
-    let text = data.output_text || "";
+      body: JSON.stringify({
 
-    if (!text && data.output) {
-      for (const item of data.output) {
-        if (item.type === "text" && item.text) {
-          text += item.text;
-        }
-      }
-    }
+        model: "gemini-3.6-flash",
 
-    text = text
-      .replace(/```json/gi, "")
-      .replace(/```/g, "")
-      .trim();
+        input: [
 
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
+          {
+            type: "text",
+            text: prompt
+          },
 
-    if (start === -1 || end === -1) {
-      return res.status(500).json({
-        error: "Gemini valid JSON দেয়নি"
-      });
-    }
+          {
+            type: "image",
+            data: image,
+            mime_type: mimeType || "image/jpeg"
+          }
 
-    const result = JSON.parse(
-      text.substring(start, end + 1)
-    );
+        ],
 
-    res.json(result);
+        // JSON output enforce করা
+        response_format: {
 
-  } catch (error) {
-    console.error(error);
+          type: "text",
 
-    res.status(500).json({
-      error: error.message
-    });
-  }
-});
+          mime_type: "application/json",
 
-const PORT = process.env.PORT || 3000;
+          schema: {
 
-app.listen(PORT, () => {
-  console.log(
-    `RoutineAI running on port ${PORT}`
-  );
-});
+            type: "object",
+
+            properties: {
+
+              routines: {
+
+                type: "array",
+
+                items: {
+
+                  type: "object",
+
+                  properties: {
+
+                    title: {
+                      type: "string"
+                    },
+
+                    time: {
+                      type: "string"
+                    },
+
+                    duration: {
+                      type: "integer"
+                    }
+
+                  },
+
+                  required: [
+                    "title",
+                   
