@@ -2,61 +2,38 @@ const express = require("express");
 
 const app = express();
 
-// JSON request-এর জন্য
 app.use(express.json({ limit: "20mb" }));
 
-// index.html serve করবে
 app.use(express.static(__dirname));
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const API_KEY = process.env.GEMINI_API_KEY;
 
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/interactions";
 
-
 app.post("/api/analyze", async (req, res) => {
-
   try {
+    const image = req.body.image;
+    const mimeType = req.body.mimeType || "image/jpeg";
 
-    const { image, mimeType } = req.body;
-
-    // ছবি পাওয়া গেছে কি না
     if (!image) {
-
       return res.status(400).json({
         error: "Image পাওয়া যায়নি"
       });
-
     }
 
-
-    // API key পাওয়া গেছে কি না
-    if (!GEMINI_API_KEY) {
-
+    if (!API_KEY) {
       return res.status(500).json({
-        error: "GEMINI_API_KEY server-এ সেট করা হয়নি"
+        error: "GEMINI_API_KEY সেট করা হয়নি"
       });
-
     }
 
-
-    // Gemini-কে দেওয়া instruction
     const prompt = `
-You are an AI school routine assistant.
+Read this school routine image carefully.
 
-Read the uploaded school routine image carefully.
+Extract every clearly visible subject/task.
 
-Extract every clearly visible routine entry.
-
-For each entry find:
-
-1. Subject or task name
-2. Start time
-3. Duration in minutes
-
-Return ONLY JSON.
-
-Example:
+Return ONLY JSON in this format:
 
 {
   "routines": [
@@ -64,96 +41,109 @@ Example:
       "title": "Mathematics",
       "time": "08:00",
       "duration": 45
-    },
-    {
-      "title": "English",
-      "time": "09:00",
-      "duration": 45
     }
   ]
 }
 
 Rules:
-
 - Use 24-hour time.
-- Convert AM/PM correctly.
-- Extract every clearly readable entry.
-- Do not invent subjects.
-- Do not invent times.
-- If duration is not visible, use 45 minutes.
-- If something is unclear, skip it.
+- Extract all clearly readable entries.
+- Do not invent information.
+- If duration is not visible, use 45.
 `;
 
-
-    // Gemini API request
     const response = await fetch(GEMINI_URL, {
-
       method: "POST",
 
       headers: {
-
         "Content-Type": "application/json",
-
-        "x-goog-api-key": GEMINI_API_KEY
-
+        "x-goog-api-key": API_KEY
       },
 
       body: JSON.stringify({
-
         model: "gemini-3.6-flash",
 
         input: [
-
           {
             type: "text",
             text: prompt
           },
-
           {
             type: "image",
             data: image,
-            mime_type: mimeType || "image/jpeg"
+            mime_type: mimeType
           }
+        ]
+      })
+    });
 
-        ],
+    const data = await response.json();
 
-        // JSON output enforce করা
-        response_format: {
+    console.log("Gemini response:", JSON.stringify(data));
 
-          type: "text",
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error:
+          data?.error?.message ||
+          "Gemini API error"
+      });
+    }
 
-          mime_type: "application/json",
+    let text = data.output_text || "";
 
-          schema: {
+    if (!text && Array.isArray(data.output)) {
+      for (const item of data.output) {
+        if (item && item.type === "text" && item.text) {
+          text += item.text;
+        }
+      }
+    }
 
-            type: "object",
+    text = String(text)
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
 
-            properties: {
+    let result;
 
-              routines: {
+    try {
+      result = JSON.parse(text);
+    } catch (error) {
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
 
-                type: "array",
+      if (start === -1 || end === -1) {
+        return res.status(500).json({
+          error: "Gemini valid JSON দেয়নি"
+        });
+      }
 
-                items: {
+      result = JSON.parse(
+        text.substring(start, end + 1)
+      );
+    }
 
-                  type: "object",
+    if (!result.routines || !Array.isArray(result.routines)) {
+      return res.status(500).json({
+        error: "Routine পাওয়া যায়নি"
+      });
+    }
 
-                  properties: {
+    res.json({
+      routines: result.routines
+    });
 
-                    title: {
-                      type: "string"
-                    },
+  } catch (error) {
+    console.error("Server error:", error);
 
-                    time: {
-                      type: "string"
-                    },
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
 
-                    duration: {
-                      type: "integer"
-                    }
+const PORT = process.env.PORT || 3000;
 
-                  },
-
-                  required: [
-                    "title",
-                   
+app.listen(PORT, () => {
+  console.log(`RoutineAI running on port ${PORT}`);
+});
